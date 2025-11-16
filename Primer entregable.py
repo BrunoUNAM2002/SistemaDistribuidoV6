@@ -20,6 +20,40 @@ SQL_SCHEMA_PATH = os.path.join(BASE_DIR,'schema2.sql')
 #    Vamos a crearla dentro de tu carpeta 'data'
 DB_PATH = os.path.join(BASE_DIR,'emergencias.db') # <--- ¡Crearemos este!
 
+def init_db():
+    """
+    Usa los 'planos' (schema2.sql) para construir
+    el 'edificio' (emergencias.db).
+    """
+    print(f"Inicializando la base de datos en: {DB_PATH}")
+    conn = None
+    try:
+        # 1. Conecta (y crea) el archivo .db (el edificio)
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Habilitar claves foráneas
+        cursor.execute("PRAGMA foreign_keys = ON;")
+
+        # 2. Abre y lee el archivo .sql (los planos)
+        print(f"Leyendo 'planos' desde: {SQL_SCHEMA_PATH}")
+        with open(SQL_SCHEMA_PATH, 'r') as f:
+            sql_script = f.read()  # Lee todo el contenido del archivo
+
+        # 3. Ejecuta los "planos" en el "edificio"
+        #    Usamos 'executescript' porque tu archivo .sql
+        #    probablemente tiene múltiples comandos.
+        cursor.executescript(sql_script)
+        conn.commit()
+        print(f"¡Éxito! Base de datos y tablas creadas en {DB_PATH}")
+
+    except FileNotFoundError:
+        print(f"ERROR: No se encontró el archivo de schema en: {SQL_SCHEMA_PATH}")
+    except Exception as e:
+        print(f"Error al inicializar la base de datos: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 # Flag para controlar el cierre del programa
 shutdown_event = threading.Event()
