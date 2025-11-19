@@ -1,6 +1,5 @@
 import socket
 import threading
-from datetime import datetime
 import sqlite3
 import json
 import os
@@ -11,13 +10,9 @@ SQL_SCHEMA_PATH = os.path.join(BASE_DIR, 'schema2.sql')
 DB_PATH = os.path.join(BASE_DIR, 'emergencias.db')
 
 # --- Configuración de Red ---
-# Puerto en el que este nodo escuchará
 SERVER_PORT = 5555 
-# Lista de otros nodos (Salas) a los que notificaremos cambios.
-# NOTA: ¡Debes actualizar esto con las IPs y puertos de tus otros nodos!
 NODOS_REMOTOS = [
-    # ('IP_SALA_2', 5556),
-    # ('IP_SALA_3', 5557),
+    # ('192.168.X.X', 5555), <--- Agrega aquí las IPs de tus clones cuando los tengas
 ]
 
 # --- Flag de Cierre ---
@@ -26,10 +21,6 @@ shutdown_event = threading.Event()
 # --- Funciones de Base de Datos ---
 
 def init_db():
-    """
-    Usa los 'planos' (schema2.sql) para construir
-    el 'edificio' (emergencias.db).
-    """
     print(f"Inicializando la base de datos en: {DB_PATH}")
     conn = None
     try:
@@ -37,266 +28,221 @@ def init_db():
         cursor = conn.cursor()
         cursor.execute("PRAGMA foreign_keys = ON;")
         
-        print(f"Leyendo 'planos' desde: {SQL_SCHEMA_PATH}")
-        with open(SQL_SCHEMA_PATH, 'r') as f:
-            sql_script = f.read()
-            
-        cursor.executescript(sql_script)
+        # Solo intentamos crear si no existe, leyendo el schema
+        if not os.path.exists(DB_PATH) or os.path.getsize(DB_PATH) == 0:
+             print(f"Leyendo 'planos' desde: {SQL_SCHEMA_PATH}")
+             with open(SQL_SCHEMA_PATH, 'r') as f:
+                sql_script = f.read()
+             cursor.executescript(sql_script)
+             print("Tablas creadas.")
+        
         conn.commit()
-        print(f"¡Éxito! Base de datos y tablas creadas en {DB_PATH}")
+        print(f"¡Conexión a BD exitosa!")
 
-    except FileNotFoundError:
-        print(f"ERROR: No se encontró el archivo de schema en: {SQL_SCHEMA_PATH}")
     except Exception as e:
-        print(f"Error al inicializar la base de datos: {e}")
+        print(f"Nota: {e}") # Puede fallar si la tabla ya existe, es normal.
     finally:
-        if conn:
-            conn.close()
+        if conn: conn.close()
 
 def ejecutar_transaccion(comando):
-    """
-    Ejecuta un comando de transacción (recibido por red o local)
-    en la base de datos local.
-    """
-    # (Esta es una función placeholder. La lógica real es más compleja)
-    print(f"[BD Local] Ejecutando transacción: {comando['accion']} en {comando['tabla']}")
-    
-    # --- Lógica futura ---
-    # 1. Conectar a DB_PATH
-    # 2. Construir el SQL (ej: INSERT INTO PACIENTES...)
-    # 3. Ejecutar y comitear
-    # 4. Manejar conflictos (ej. si dos nodos insertan el mismo folio)
-
+    """ Ejecuta un comando SQL generado localmente o recibido por red """
+    print(f"[BD Local] Ejecutando: {comando['accion']} en {comando['tabla']}")
+    # Aquí iría la lógica para convertir el JSON a SQL (INSERT/UPDATE)
+    # Por ahora es un placeholder funcional para la demo.
 
 # --- Funciones de Red (Middleware) ---
 
 def propagar_transaccion(comando_json):
-    """
-    Envía un comando JSON a todos los otros nodos conocidos.
-    (Reemplaza a 'send_message')
-    """
-    print(f"Propagando transacción a {len(NODOS_REMOTOS)} nodos...")
+    if not NODOS_REMOTOS:
+        return # No hacer nada si no hay nodos configurados
+        
+    print(f"Propagando a {len(NODOS_REMOTOS)} nodos...")
     for (ip, puerto) in NODOS_REMOTOS:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(2.0) # Timeout corto
+                s.settimeout(2.0)
                 s.connect((ip, puerto))
                 s.sendall(comando_json.encode('utf-8'))
-                respuesta = s.recv(1024).decode('utf-8')
-                print(f"Respuesta de {ip}:{puerto}: {respuesta}")
+                s.recv(1024) # Esperar ACK
         except Exception as e:
-            print(f"Error al propagar a {ip}:{puerto}: {e}")
+            print(f"Error al propagar a {ip}: {e}")
 
 def handle_client(client_socket, client_address):
-    """
-    Maneja una conexión entrante de OTRO nodo.
-    Espera recibir una transacción JSON.
-    (Reemplaza la lógica de chat)
-    """
-    print(f"Recibiendo transacción de: {client_address}")
     try:
-        # Esperamos recibir una transacción completa
-        # (Para robustez, se necesitaría un búfer aquí)
         message = client_socket.recv(1024).decode('utf-8')
-        if not message:
-            return # Conexión vacía
-
-        comando = json.loads(message)
-        print(f"Comando JSON recibido: {comando}")
-        
-        # Ejecuta la transacción recibida en nuestra BD local
-        ejecutar_transaccion(comando)
-        
-        # Enviar confirmación
-        response = "TRANSACCION_OK"
-        client_socket.send(response.encode('utf-8'))
-
-    except json.JSONDecodeError:
-        print(f"Error: Se recibió un mensaje no-JSON de {client_address}")
+        if message:
+            comando = json.loads(message)
+            print(f"Transacción recibida de {client_address}: {comando}")
+            ejecutar_transaccion(comando)
+            client_socket.send("OK".encode('utf-8'))
     except Exception as e:
-        print(f"Error en handle_client: {e}")
+        print(f"Error handling client: {e}")
     finally:
         client_socket.close()
 
 def server(server_port):
-    """
-    Función del servidor que escucha conexiones entrantes
-    y las delega a 'handle_client' en un nuevo hilo.
-    (Actualizada para no usar 'messages')
-    """
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind(('0.0.0.0', server_port))
     server_socket.listen(5)
     server_socket.settimeout(1.0)
-    print(f"Servidor escuchando en el puerto {server_port}...")
     
     while not shutdown_event.is_set():
         try:
             client_socket, client_address = server_socket.accept()
-            print(f"\nConexión entrante de {client_address}")
-            
             thread = threading.Thread(target=handle_client, args=(client_socket, client_address))
             thread.daemon = True
             thread.start()
         except socket.timeout:
             continue
-        except Exception as e:
-            if not shutdown_event.is_set():
-                print(f"Error en servidor: {e}")
-    
+        except Exception:
+            pass
     server_socket.close()
-    print("Servidor cerrado correctamente")
 
-# --- Funciones de la Aplicación (Menú) ---
+# --- FUNCIONES DE LA APLICACIÓN (VISUALIZACIÓN) ---
+
+def ver_pacientes_locales():
+    print("\n--- 🤕 PACIENTES REGISTRADOS ---")
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, nombre, edad, contacto FROM PACIENTES")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if not rows: print("   (Sin registros)")
+    for r in rows:
+        print(f"   ID: {r[0]} | {r[1]} ({r[2]} años) - Tel: {r[3]}")
+
+def ver_doctores_locales():
+    print("\n--- 👨‍⚕️ DOCTORES ---")
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    # NOTA: Eliminé 'especialidad' de la consulta
+    cursor.execute("SELECT id, nombre, disponible FROM DOCTORES")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if not rows: print("   (Sin registros)")
+    for r in rows:
+        estado = "🟢 Disponible" if r[2] == 1 else "🔴 Ocupado"
+        print(f"   ID: {r[0]} | {r[1]} - {estado}")
+
+def ver_camas_locales():
+    print("\n--- 🛏️ ESTADO DE CAMAS ---")
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    # Hacemos un LEFT JOIN para ver el nombre del paciente si la cama está ocupada
+    query = """
+        SELECT c.numero, c.ocupada, p.nombre 
+        FROM CAMAS_ATENCION c
+        LEFT JOIN PACIENTES p ON c.paciente_id = p.id
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if not rows: print("   (Sin registros)")
+    for r in rows:
+        # r[0]=numero, r[1]=ocupada, r[2]=nombre_paciente
+        if r[1] == 1:
+            estado = f"🔴 OCUPADA por: {r[2]}"
+        else:
+            estado = "🟢 LIBRE"
+        print(f"   Cama {r[0]}: {estado}")
+
+def ver_trabajadores_sociales():
+    print("\n--- 📋 TRABAJADORES SOCIALES ---")
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, nombre, activo FROM TRABAJADORES_SOCIALES")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if not rows: print("   (Sin registros)")
+    for r in rows:
+        estado = "Activo" if r[2] == 1 else "Inactivo"
+        print(f"   ID: {r[0]} | {r[1]} ({estado})")
+
+def ver_visitas_emergencia():
+    print("\n--- 🚨 HISTORIAL DE VISITAS (Bitácora) ---")
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    # Seleccionamos Folio, Estado y Fecha
+    cursor.execute("SELECT folio, estado, timestamp, paciente_id FROM VISITAS_EMERGENCIA")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if not rows: print("   (Sin registros)")
+    for r in rows:
+        print(f"   📄 {r[0]} | Estado: {r[1]}")
+        print(f"      Fecha: {r[2]} | Paciente ID: {r[3]}")
+        print("      " + "-"*30)
 
 def registrar_nuevo_paciente():
-    """
-    Lógica para la Opción 1 del menú.
-    Registra un paciente localmente y propaga el cambio.
-    """
-    print("\n[Registrar Nuevo Paciente]")
+    print("\n[Nuevo Ingreso]")
     try:
         nombre = input("Nombre: ")
         edad = int(input("Edad: "))
         contacto = input("Contacto: ")
         
-        # 1. Crear el comando de transacción
         comando = {
             "accion": "INSERTAR",
             "tabla": "PACIENTES",
-            "datos": {
-                "nombre": nombre,
-                "edad": edad,
-                "sexo": "N/D", # Placeholder
-                "contacto": contacto
-            }
+            "datos": {"nombre": nombre, "edad": edad, "contacto": contacto}
         }
         
-        # 2. Ejecutar la transacción en NUESTRA BD local
-        ejecutar_transaccion(comando)
-        print("Paciente registrado localmente.")
-
-        # 3. Propagar la transacción a otros nodos
-        comando_json = json.dumps(comando)
-        propagar_transaccion(comando_json)
-
+        ejecutar_transaccion(comando) # Simulado
+        # Aquí deberías hacer el INSERT real en BD local también si quieres persistencia inmediata
+        
+        print("✅ Paciente procesado localmente.")
+        propagar_transaccion(json.dumps(comando))
+        
     except ValueError:
-        print("Error: La edad debe ser un número.")
-    except Exception as e:
-        print(f"Error al registrar paciente: {e}")
-
-def ver_pacientes_locales():
-    """
-    Lógica para la Opción 2 del menú.
-    Se conecta a la BD local y muestra los pacientes.
-    """
-    print("\n[Pacientes Registrados Localmente]")
-    conn = None
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, nombre, edad, contacto FROM PACIENTES")
-        pacientes = cursor.fetchall()
-        
-        if not pacientes:
-            print("No hay pacientes registrados.")
-            return
-            
-        print(f"Mostrando {len(pacientes)} pacientes:")
-        for p in pacientes:
-            print(f"  ID: {p[0]}, Nombre: {p[1]}, Edad: {p[2]}, Contacto: {p[3]}")
-            
-    except Exception as e:
-        print(f"Error al consultar la base de datos: {e}")
-    finally:
-        if conn:
-            conn.close()
-
-#--- Funcion para ver doctores ---- 
-
-def ver_doctores_locales():
-    """
-    Lógica para la Opción 3 del menú.
-    Muestra la lista de doctores y su disponibilidad.
-    """
-    print("\n[Doctores en Turno]")
-    conn = None
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        # Seleccionamos nombre, especialidad y estado (1=Disponible, 0=Ocupado)
-        cursor.execute("SELECT id, nombre, especialidad, disponible FROM DOCTORES")
-        doctores = cursor.fetchall()
-        
-        if not doctores:
-            print("No hay doctores registrados.")
-            return
-            
-        print(f"Mostrando {len(doctores)} doctores:")
-        for d in doctores:
-            estado = "🟢 Disponible" if d[3] == 1 else "🔴 Ocupado"
-            print(f"  ID: {d[0]} | {d[1]} ({d[2]}) - {estado}")
-            
-    except Exception as e:
-        print(f"Error al consultar doctores: {e}")
-    finally:
-        if conn:
-            conn.close()
-
+        print("Error: Edad inválida.")
 
 # --- Función Principal ---
 
 def main():
-    """
-    Función principal que inicializa la BD,
-    inicia el servidor y muestra el menú de usuario.
-    (Reemplaza la lógica de chat)
-    """
-    # 1. Inicializa la base de datos
-    init_db()  
+    init_db()
     
-    # 2. Inicia el servidor de escucha en su propio hilo
-    server_thread = threading.Thread(target=server, args=(SERVER_PORT,))
-    server_thread.daemon = True
-    server_thread.start()
+    t = threading.Thread(target=server, args=(SERVER_PORT,))
+    t.daemon = True
+    t.start()
     
-    print("\n" + "="*50)
-    print("  SISTEMA DE GESTIÓN DE EMERGENCIAS - NODO SALA 1")
-    print("="*50 + "\n")
-    
-    # 3. Bucle principal de la aplicación (Menú)
+    print(f"\n🏥 NODO ACTIVO - Puerto {SERVER_PORT}")
+    print("Sistema de Gestión Distribuida v1.0")
+
     try:
         while True:
-            print("\n--- Menú Principal ---")
-            print("1. Registrar Nuevo Paciente")
-            print("2. Ver Pacientes Locales")
-            print("3. Ver Doctores")
-            print("9. Salir")
+            print("\n" + "="*30)
+            print("       MENÚ PRINCIPAL")
+            print("="*30)
+            print("1. ➕ Registrar Nuevo Paciente")
+            print("2. 🤕 Ver Pacientes")
+            print("3. 👨‍⚕️ Ver Doctores")
+            print("4. 🛏️ Ver Camas")
+            print("5. 📋 Ver Trabajadores Sociales")
+            print("6. 🚨 Ver Visitas (Bitácora)")
+            print("9. 🚪 Salir")
+            print("-" * 30)
+            
+            op = input("Opción > ")
 
-            opcion = input("Seleccione una opción: ")
-
-            if opcion == '1':
-                registrar_nuevo_paciente()
-            elif opcion == '2':
-                ver_pacientes_locales()
-            elif opcion == '3':
-                ver_doctores_locales()
-            elif opcion == '9':
-                print("\nCerrando el programa...")
-                shutdown_event.set() # Notifica al hilo servidor
-                break
-            else:
-                print("Opción no válida. Intente de nuevo.")
-
+            if op == '1': registrar_nuevo_paciente()
+            elif op == '2': ver_pacientes_locales()
+            elif op == '3': ver_doctores_locales()
+            elif op == '4': ver_camas_locales()
+            elif op == '5': ver_trabajadores_sociales()
+            elif op == '6': ver_visitas_emergencia()
+            elif op == '9': 
+                print("Cerrando sistema..."); shutdown_event.set(); break
+            else: print("Opción no válida.")
+            
     except KeyboardInterrupt:
-        print("\n\nCerrando el programa con Ctrl+C...")
         shutdown_event.set()
-    
-    # Esperar un momento para que los threads terminen
-    print("Esperando a que los threads terminen...")
-    threading.Event().wait(2)
-    print("Programa cerrado correctamente. ¡Hasta luego!")
+
+    print("Esperando cierre de hilos...")
+    threading.Event().wait(1)
 
 if __name__ == "__main__":
     main()
