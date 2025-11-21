@@ -1,0 +1,48 @@
+# ============================================================================
+# CONSOLE-BASED DISTRIBUTED MEDICAL SYSTEM - REQUIREMENTS
+# Sistema de Consenso Distribuido con Interfaz de Consola
+# ============================================================================
+
+# Flask core (without web server - just for app context and SQLAlchemy)
+Flask==3.0.0
+Werkzeug==3.0.1
+
+# Database
+Flask-SQLAlchemy==3.1.1
+SQLAlchemy==2.0.23
+
+# Console UI (NEW - for terminal interface)
+rich==14.1.0
+questionary==2.0.1
+
+# System metrics
+psutil==5.9.6
+
+# Utilities
+python-dotenv==1.0.0
+
+# ============================================================================
+# NOTAS DE INSTALACIÓN
+# ============================================================================
+#
+# Para instalar todas las dependencias:
+#   pip install -r requirements.txt
+#
+# Para desarrollo:
+#   pip install -r requirements.txt --upgrade
+#
+# ============================================================================
+# DEPENDENCIAS DEL SISTEMA BULLY SIMPLIFICADO
+# ============================================================================
+#
+# - psutil: Métricas del sistema (CPU, memoria, uptime)
+# - Flask-SocketIO: WebSockets para notificaciones en tiempo real
+# - Flask-SQLAlchemy: ORM para base de datos
+#
+# ============================================================================
+# COMPATIBILIDAD
+# ============================================================================
+#
+# Python 3.8+
+# Sistema operativo: Linux, macOS, Windows
+# Arquitectura: x86_64, ARM64

@@ -141,10 +141,51 @@
         </div>
     </div>
     {% endif %}
+
+    <!-- Bully Algorithm Status -->
+    <div class="card mb-4">
+        <div class="card-header">
+            Estado del Sistema Distribuido (Bully Algorithm)
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-6">
+                    <h5>Estado de Este Nodo</h5>
+                    <table class="table table-sm">
+                        <tr>
+                            <td><strong>Nodo ID:</strong></td>
+                            <td id="bully-node-id">{{ node_id }}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Estado:</strong></td>
+                            <td id="bully-state"><span class="badge badge-secondary">Cargando...</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Líder Actual:</strong></td>
+                            <td id="bully-leader">Cargando...</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Último Heartbeat:</strong></td>
+                            <td id="bully-heartbeat">Cargando...</td>
+                        </tr>
+                    </table>
+                </div>
+
+                <div class="col-6">
+                    <h5>Cluster (4 Nodos)</h5>
+                    <div id="cluster-nodes" class="cluster-grid">
+                        <!-- Will be populated by JavaScript -->
+                        <div class="text-center text-muted">Cargando cluster...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/bully-dashboard.js') }}"></script>
 <script>
 // WebSocket connection for real-time updates
 if (typeof io !== 'undefined') {

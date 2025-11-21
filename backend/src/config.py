@@ -15,7 +15,7 @@ class Config:
     # Base de datos SQLite local del nodo
     SQLALCHEMY_DATABASE_URI = os.getenv(
         'DATABASE_URI',
-        f'sqlite:///../emergency_sala{NODE_ID}.db'
+        f'sqlite:///../data/emergency_sala{NODE_ID}.db'
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 

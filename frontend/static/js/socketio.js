@@ -64,6 +64,34 @@ socket.on('metricas_actualizadas', (data) => {
     }
 });
 
+// ============================================================================
+// EVENTOS DEL SISTEMA BULLY
+// ============================================================================
+
+// Evento: Cambio de líder
+socket.on('lider_cambio', (data) => {
+    console.log('👑 Cambio de líder del sistema Bully:', data);
+
+    // Mostrar notificación toast
+    showToast('warning', 'Cambio de Líder',
+              `Nodo ${data.nuevo_lider} es ahora el líder (Term ${data.term})`);
+
+    // Actualizar estado de Bully si el componente está disponible
+    if (window.bullyDashboard && typeof window.bullyDashboard.handleLeaderChange === 'function') {
+        window.bullyDashboard.handleLeaderChange(data);
+    }
+});
+
+// Evento: Estado del sistema Bully
+socket.on('bully_status', (data) => {
+    console.log('📡 Estado del sistema Bully:', data);
+
+    // Actualizar dashboard de Bully si está disponible
+    if (window.bullyDashboard && typeof window.bullyDashboard.updateStatus === 'function') {
+        window.bullyDashboard.updateStatus(data);
+    }
+});
+
 // Función para mostrar notificaciones toast
 function showToast(type, title, message) {
     // Colores según tipo

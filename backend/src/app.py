@@ -5,9 +5,17 @@ from config import Config
 from models import db, Usuario, get_metricas_dashboard
 from auth import login_manager, init_default_users, get_user_info
 import logging
+import logging.handlers
+import os
+import time
 
-# Crear aplicación Flask
-app = Flask(__name__)
+# Importar sistema Bully simplificado
+from bully import BullyNode
+
+# Crear aplicación Flask con rutas correctas a templates y static
+app = Flask(__name__,
+            template_folder='../frontend/templates',
+            static_folder='../frontend/static')
 app.config.from_object(Config)
 
 # Inicializar extensiones
@@ -15,9 +23,78 @@ db.init_app(app)
 login_manager.init_app(app)
 socketio = SocketIO(app, async_mode=app.config['SOCKETIO_ASYNC_MODE'])
 
+# ============================================================================
+# CONFIGURACIÓN AVANZADA DE LOGGING
+# ============================================================================
+
+def setup_logging():
+    """
+    Configura sistema de logging con rotación de archivos y formato estructurado.
+
+    Features:
+    - Logs rotativos (10MB max, 5 backups)
+    - Formato estructurado con timestamps, niveles, componentes
+    - Salida dual: consola (INFO+) y archivo (DEBUG+)
+    - Identificación de nodo para correlación en sistema distribuido
+    """
+    # Crear directorio de logs si no existe
+    log_dir = '../logs'
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+
+    # Formato de logs: [2025-01-19 10:30:45] [Node-1] [INFO] [bully.node] Message
+    log_format = logging.Formatter(
+        fmt='[%(asctime)s] [Node-%(node_id)s] [%(levelname)s] [%(name)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+    # Root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)  # Capturar TODO a nivel raíz
+
+    # Handler 1: Archivo rotativo (DEBUG y superior)
+    file_handler = logging.handlers.RotatingFileHandler(
+        filename=f'{log_dir}/node_{Config.NODE_ID}.log',
+        maxBytes=10 * 1024 * 1024,  # 10MB
+        backupCount=5,
+        encoding='utf-8'
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(log_format)
+
+    # Handler 2: Consola (INFO y superior)
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(log_format)
+
+    # Agregar handlers al root logger
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+
+    # Configurar filtros para inyectar node_id en todos los logs
+    class NodeIdFilter(logging.Filter):
+        def filter(self, record):
+            record.node_id = Config.NODE_ID
+            return True
+
+    node_filter = NodeIdFilter()
+    for handler in root_logger.handlers:
+        handler.addFilter(node_filter)
+
+    # Silenciar logs ruidosos de librerías externas
+    logging.getLogger('werkzeug').setLevel(logging.WARNING)
+    logging.getLogger('socketio').setLevel(logging.WARNING)
+    logging.getLogger('engineio').setLevel(logging.WARNING)
+
+    return logging.getLogger(__name__)
+
 # Configurar logging
-logging.basicConfig(level=app.config['LOG_LEVEL'])
-logger = logging.getLogger(__name__)
+logger = setup_logging()
+
+# ============================================================================
+# SISTEMA BULLY SIMPLIFICADO (Variable global, se inicializa en main)
+# ============================================================================
+bully_manager: BullyNode = None
 
 
 # ============================================================================
@@ -105,10 +182,12 @@ def dashboard():
 from routes.visitas import visitas_bp
 from routes.consultas import consultas_bp
 from routes.api import api_bp
+from routes.bully import bully_bp
 
 app.register_blueprint(visitas_bp, url_prefix='/visitas')
 app.register_blueprint(consultas_bp, url_prefix='/consultas')
 app.register_blueprint(api_bp, url_prefix='/api')
+app.register_blueprint(bully_bp, url_prefix='/api/bully')
 
 
 # ============================================================================
@@ -135,6 +214,16 @@ def handle_solicitar_metricas():
     emit('metricas_actualizadas', metricas)
 
 
+@socketio.on('solicitar_bully_status')
+def handle_solicitar_bully_status():
+    """Cliente solicita estado del sistema Bully"""
+    if bully_manager:
+        status = bully_manager.get_status()
+        emit('bully_status', status)
+    else:
+        emit('bully_status', {'error': 'Bully system not initialized'})
+
+
 # Evento global: emitir cuando se crea una visita
 def notificar_visita_creada(visita_data):
     """Notifica a todos los clientes conectados que se creó una visita"""
@@ -154,6 +243,20 @@ app.notificar_visita_creada = notificar_visita_creada
 app.notificar_visita_cerrada = notificar_visita_cerrada
 
 
+# Función para notificar cambios de líder
+def notificar_cambio_lider(nuevo_lider_id, term):
+    """Notifica a todos los clientes que cambió el líder"""
+    socketio.emit('lider_cambio', {
+        'nuevo_lider': nuevo_lider_id,
+        'term': term,
+        'timestamp': time.time()
+    }, broadcast=True)
+    logger.info(f'Notificación broadcast: Nuevo líder #{nuevo_lider_id} (term {term})')
+
+
+app.notificar_cambio_lider = notificar_cambio_lider
+
+
 # ============================================================================
 # INICIALIZACIÓN DE LA BASE DE DATOS
 # ============================================================================
@@ -164,6 +267,51 @@ def init_db():
         db.create_all()
         init_default_users()
         logger.info('Base de datos inicializada correctamente')
+
+
+def init_bully():
+    """Inicializa y arranca el sistema Bully simplificado"""
+    global bully_manager
+
+    # Calcular puertos basados en NODE_ID
+    tcp_port = 5555 + (Config.NODE_ID - 1)
+    udp_port = 6000 + (Config.NODE_ID - 1)
+
+    # Construir diccionario de cluster_nodes en formato {node_id: (ip, tcp_port, udp_port)}
+    # BullyNode espera TODOS los nodos del cluster (incluido él mismo)
+    cluster_nodes = {}
+    for nodo in Config.OTROS_NODOS:
+        node_id = nodo['id']
+        ip = 'localhost'  # Todos en localhost para desarrollo
+        tcp = 5555 + (node_id - 1)
+        udp = 6000 + (node_id - 1)
+        cluster_nodes[node_id] = (ip, tcp, udp)
+
+    logger.info('='*60)
+    logger.info('🚀 Inicializando Sistema Bully Simplificado')
+    logger.info(f'   Node ID: {Config.NODE_ID}')
+    logger.info(f'   TCP Port: {tcp_port}')
+    logger.info(f'   UDP Port: {udp_port}')
+    logger.info(f'   Cluster: {len(cluster_nodes)} nodes')
+    logger.info('='*60)
+
+    # Crear instancia del Bully Node
+    bully_manager = BullyNode(
+        node_id=Config.NODE_ID,
+        cluster_nodes=cluster_nodes,
+        tcp_port=tcp_port,
+        udp_port=udp_port
+    )
+
+    # Iniciar el sistema Bully
+    bully_manager.start()
+
+    # Hacer accesible globalmente en app
+    app.bully_manager = bully_manager
+
+    logger.info('✅ Sistema Bully iniciado correctamente')
+
+    return bully_manager
 
 
 # ============================================================================
@@ -198,20 +346,32 @@ if __name__ == '__main__':
     # Inicializar BD si no existe
     init_db()
 
+    # Inicializar sistema Bully
+    bully_manager = init_bully()
+
     # Información de inicio
     logger.info('='*60)
     logger.info(f'🏥 Sistema de Emergencias Médicas - Nodo {Config.NODE_ID}')
     logger.info(f'🌐 Flask corriendo en http://localhost:{Config.FLASK_PORT}')
-    logger.info(f'📡 Puerto TCP: {Config.TCP_PORT}')
+    logger.info(f'📡 Puerto TCP (Bully): {5555 + (Config.NODE_ID - 1)}')
+    logger.info(f'📡 Puerto UDP (Heartbeat): {6000 + (Config.NODE_ID - 1)}')
     logger.info(f'💾 Base de datos: {Config.SQLALCHEMY_DATABASE_URI}')
+    logger.info(f'👑 Bully Status: {bully_manager.get_status()["state"]}')
     logger.info('='*60)
 
-    # Iniciar servidor Flask con SocketIO
-    socketio.run(
-        app,
-        host='0.0.0.0',
-        port=Config.FLASK_PORT,
-        debug=True,
-        use_reloader=True,
-        allow_unsafe_werkzeug=True  # Para desarrollo
-    )
+    try:
+        # Iniciar servidor Flask con SocketIO
+        socketio.run(
+            app,
+            host='0.0.0.0',
+            port=Config.FLASK_PORT,
+            debug=True,
+            use_reloader=False,  # Desactivar reloader para evitar doble inicio del Bully
+            allow_unsafe_werkzeug=True  # Para desarrollo
+        )
+    finally:
+        # Detener Bully al salir
+        if bully_manager:
+            logger.info('Deteniendo sistema Bully...')
+            bully_manager.stop()
+            logger.info('Sistema Bully detenido')

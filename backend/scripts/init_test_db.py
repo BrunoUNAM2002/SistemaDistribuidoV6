@@ -8,6 +8,9 @@ import os
 import sys
 from datetime import datetime, timedelta
 
+# Agregar el directorio src al path para importar módulos
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
 # Configurar el nodo antes de importar
 os.environ['NODE_ID'] = '1'
 

@@ -134,8 +134,9 @@
 
     <!-- OPTIMIZED: Only essential JavaScript, NO jQuery, NO Bootstrap JS -->
     <script src="{{ url_for('static', filename='js/animations-lite.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/socketio.js') }}"></script>
+    <!-- CRITICAL: Socket.IO library MUST load BEFORE socketio.js (which uses 'io') -->
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='js/socketio.js') }}"></script>
 
     {% block scripts %}{% endblock %}
 </body>
