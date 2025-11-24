@@ -15,9 +15,9 @@ DB_PATH = os.path.join(BASE_DIR, 'emergencias.db')
 # --- Configuración de Red (AJUSTA ESTO POR NODO) ---
 SERVER_PORT = 5555  # PUERTO DE ESTE NODO (cámbialo en cada nodo)
 NODOS_REMOTOS = [
-    ('192.168.95.130', 5556),
-    ('192.168.95.131', 5557),
-    ('192.168.95.132', 5558),
+    ('192.168.95.130', 5556),  # Nodo 1
+    ('192.168.95.131', 5557),  # Nodo 2
+    ('192.168.95.132', 5558),  # Nodo 3
 ]
 
 # --- Flag de Cierre ---
@@ -75,8 +75,8 @@ def pedir_mutex():
         msg = {
             "tipo": "MUTEX",
             "accion": "REQUEST",
-            "from": NODE_ID,
-            "ts": request_ts
+            "from": NODE_ID,  # El nodo que realiza la solicitud
+            "ts": request_ts  # Timestamp de la solicitud
         }
         broadcast_mutex(msg)
 
@@ -121,12 +121,20 @@ def liberar_mutex():
 
 
 def enviar_mutex_reply(target_port):
+    """
+    Enviar una respuesta REPLY de mutex a un nodo remoto.
+    """
+    # Obtener la IP del nodo remoto usando el puerto de destino
+    target_ip = next(ip for ip, port in NODOS_REMOTOS if port == target_port)
+    
     msg = {
         "tipo": "MUTEX",
         "accion": "REPLY",
-        "from": NODE_ID
+        "from": NODE_ID  # El nodo que envía la respuesta
     }
-    enviar_mensaje_a('localhost', target_port)
+    
+    # Enviar mensaje de respuesta
+    enviar_mensaje_a(target_ip, target_port, msg)
 
 
 def handle_mutex_message(msg):
@@ -156,6 +164,7 @@ def handle_mutex_message(msg):
                 if from_port not in deferred_requests:
                     deferred_requests.append(from_port)
             else:
+                # Responder con REPLY al nodo que hizo el request
                 enviar_mutex_reply(from_port)
 
     elif accion == "REPLY":
@@ -520,7 +529,6 @@ def asignar_doctor():
         print("🔓 Liberando mutex distribuido...")
         liberar_mutex()
 
-
 def cerrar_visita():
     """
     Cerrar una visita de emergencia:
@@ -752,4 +760,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
