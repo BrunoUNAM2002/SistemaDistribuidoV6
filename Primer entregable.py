@@ -15,8 +15,7 @@ DB_PATH = os.path.join(BASE_DIR, 'emergencias.db')
 # --- Configuración de Red (AJUSTA ESTO POR NODO) ---
 SERVER_PORT = 5555  # PUERTO DE ESTE NODO (cámbialo en cada nodo)
 NODOS_REMOTOS = [
-    # EJEMPLO para 4 nodos en localhost:
-    # En el nodo 5555:
+    # Ejemplo para nodo en 5555:
     # ('localhost', 5556),
     # ('localhost', 5557),
     # ('localhost', 5558),
@@ -50,7 +49,6 @@ def enviar_mensaje_a(ip, puerto, obj):
             s.settimeout(2.0)
             s.connect((ip, puerto))
             s.sendall(json.dumps(obj).encode('utf-8'))
-            # Para MUTEX no necesitamos respuesta
     except Exception:
         pass
 
@@ -209,9 +207,8 @@ def init_db():
 
 
 def ejecutar_transaccion(comando):
-    """ Ejecuta SQL recibido local o por red (aquí podrías meter lógica real). """
+    """ Stub: aquí podrías ejecutar SQL real según 'accion' y 'tabla'. """
     print(f"[BD Local] Ejecutando: {comando.get('accion')} en {comando.get('tabla')}")
-    # Aquí podrías mapear 'INSERTAR', 'UPDATE', etc. a SQL real.
 
 
 # ==========================================
@@ -525,6 +522,90 @@ def asignar_doctor():
         liberar_mutex()
 
 
+def cerrar_visita():
+    """
+    Cerrar una visita de emergencia:
+    - Cambia estado a 'Cerrada'
+    - Libera doctor (disponible=1)
+    - Libera cama (ocupada=0, paciente_id=NULL)
+    """
+    print("\n--- CERRAR VISITA DE EMERGENCIA ---")
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    # Mostrar visitas activas
+    cur.execute("""
+        SELECT folio, paciente_id, doctor_id, cama_id, estado
+        FROM VISITAS_EMERGENCIA
+        WHERE estado!='Cerrada'
+    """)
+    visitas = cur.fetchall()
+
+    if not visitas:
+        print("No hay visitas activas para cerrar.")
+        conn.close()
+        return
+
+    print("\nVisitas activas:")
+    for v in visitas:
+        print(f"Folio: {v[0]} | Paciente {v[1]} | Doctor {v[2]} | Cama {v[3]} | Estado {v[4]}")
+
+    folio = input("\nIngresa el FOLIO de la visita a cerrar: ")
+    if not folio:
+        conn.close()
+        return
+
+    # Traer datos de la visita
+    cur.execute("""
+        SELECT paciente_id, doctor_id, cama_id, estado
+        FROM VISITAS_EMERGENCIA
+        WHERE folio=?
+    """, (folio,))
+    row = cur.fetchone()
+
+    if not row:
+        print("❌ No existe una visita con ese folio.")
+        conn.close()
+        return
+
+    paciente_id, doctor_id, cama_id, estado_actual = row
+
+    if estado_actual == 'Cerrada':
+        print("Esta visita ya está cerrada.")
+        conn.close()
+        return
+
+    # Actualizar VISITA
+    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    cur.execute("""
+        UPDATE VISITAS_EMERGENCIA
+        SET estado='Cerrada', timestamp=?
+        WHERE folio=?
+    """, (ts, folio))
+
+    # Liberar doctor
+    if doctor_id is not None:
+        cur.execute("""
+            UPDATE DOCTORES
+            SET disponible=1
+            WHERE id=?
+        """, (doctor_id,))
+
+    # Liberar cama
+    if cama_id is not None:
+        cur.execute("""
+            UPDATE CAMAS_ATENCION
+            SET ocupada=0, paciente_id=NULL
+            WHERE id=?
+        """, (cama_id,))
+
+    conn.commit()
+    conn.close()
+
+    print(f"✅ Visita {folio} cerrada.")
+    print(f"   Doctor {doctor_id} y cama {cama_id} han sido liberados.")
+
+
 # ==========================================
 #      SISTEMA DE LOGIN Y MENÚS
 # ==========================================
@@ -611,6 +692,7 @@ def menu_doctor(usuario):
         print("="*40)
         print("1. 🤕 Ver Pacientes")
         print("6. 🚨 Ver Bitácora de Visitas")
+        print("7. ✅ Cerrar Visita de Emergencia")
         print("9. 🚪 Cerrar Sesión / Salir")
         print("-" * 40)
         
@@ -620,6 +702,8 @@ def menu_doctor(usuario):
             ver_pacientes_locales()
         elif op == '6':
             ver_visitas_emergencia()
+        elif op == '7':
+            cerrar_visita()
         elif op == '9':
             print("Cerrando sesión...")
             shutdown_event.set()
@@ -669,4 +753,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
