@@ -13,13 +13,21 @@ def poblar_datos_reales():
         cursor.execute("PRAGMA foreign_keys = ON;")
 
         print("🧹 Limpiando base de datos...")
+        
+        # LIMPIAR EN ORDEN CORRECTO (primero las que dependen de otras)
         cursor.execute("DELETE FROM VISITAS_EMERGENCIA")
         cursor.execute("DELETE FROM CAMAS_ATENCION")
         cursor.execute("DELETE FROM DOCTORES")
         cursor.execute("DELETE FROM TRABAJADORES_SOCIALES")
         cursor.execute("DELETE FROM PACIENTES")
         cursor.execute("DELETE FROM USUARIOS_SISTEMA")
-        cursor.execute("DELETE FROM CONSECUTIVOS_VISITAS")
+        
+        # SOLO borrar CONSECUTIVOS_VISITAS si existe
+        try:
+            cursor.execute("DELETE FROM CONSECUTIVOS_VISITAS")
+        except:
+            pass  # Si no existe, no hay problema
+            
         cursor.execute("DELETE FROM sqlite_sequence")
 
         print("📦 Insertando datos de prueba...")
@@ -56,8 +64,16 @@ def poblar_datos_reales():
         ]
         cursor.executemany("INSERT INTO USUARIOS_SISTEMA (username, password, rol, id_personal) VALUES (?, ?, ?, ?)", usuarios)
 
-        # --- CONSECUTIVOS (NUEVO) ---
-        cursor.execute("INSERT INTO CONSECUTIVOS_VISITAS (sala_id, ultimo_consecutivo) VALUES (1, 0)")
+        # --- CONSECUTIVOS (NUEVO) - CREAR SI NO EXISTE ---
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS CONSECUTIVOS_VISITAS (
+                sala_id INTEGER PRIMARY KEY,
+                ultimo_consecutivo INTEGER DEFAULT 0
+            )
+        """)
+        
+        # Insertar o actualizar consecutivo
+        cursor.execute("INSERT OR REPLACE INTO CONSECUTIVOS_VISITAS (sala_id, ultimo_consecutivo) VALUES (1, 0)")
 
         conn.commit()
         print("\n✅ Base de datos poblada exitosamente!")
